@@ -727,7 +727,7 @@ def main():
     # Footer
     st.markdown("""
     <div class="footer">
-        <p>© 2023 AgriBot | Helping Farmers Grow Better Crops | Contact: support@agribot.com</p>
+        <p>© 2025 AgriBot | Helping Farmers Grow Better Crops | Contact: support@agribot.com</p>
     </div>
     """, unsafe_allow_html=True)
 
