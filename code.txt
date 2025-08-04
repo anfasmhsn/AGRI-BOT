@@ -1,0 +1,374 @@
+import re
+import random
+from datetime import datetime
+import streamlit as st
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+import torch
+
+class AgriBot:
+    def __init__(self):
+        self.name = "AgriBot"
+        self.user_name = ""
+        self.conversation_history = []
+        
+        # Initialize Phi-3 model
+        print("🤖 Loading AI model... This may take a moment...")
+        try:
+            model_id = "microsoft/phi-3-mini-4k-instruct"
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id, 
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto" if torch.cuda.is_available() else None
+            )
+            self.generator = pipeline(
+                "text-generation", 
+                model=self.model, 
+                tokenizer=self.tokenizer,
+                device=0 if torch.cuda.is_available() else -1
+            )
+            print("✅ AI model loaded successfully!")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not load AI model ({e}). Using fallback responses.")
+            self.generator = None
+        
+        # Knowledge base for agriculture
+        self.crops_info = {
+            "rice": {
+                "season": "Kharif (June-November)",
+                "water": "High water requirement, flooded fields",
+                "soil": "Clay or loamy soil with good water retention",
+                "fertilizer": "NPK 120:60:40 kg/ha",
+                "diseases": ["Blast", "Brown spot", "Bacterial blight"],
+                "pests": ["Stem borer", "Brown planthopper", "Leaf folder"]
+            },
+            "wheat": {
+                "season": "Rabi (November-April)",
+                "water": "Moderate water requirement",
+                "soil": "Well-drained loamy soil",
+                "fertilizer": "NPK 120:60:40 kg/ha",
+                "diseases": ["Rust", "Smut", "Bunt"],
+                "pests": ["Aphids", "Termites", "Cutworms"]
+            },
+            "corn": {
+                "season": "Kharif (June-September)",
+                "water": "Moderate to high water requirement",
+                "soil": "Well-drained fertile soil",
+                "fertilizer": "NPK 150:75:75 kg/ha",
+                "diseases": ["Leaf blight", "Stalk rot", "Ear rot"],
+                "pests": ["Corn borer", "Fall armyworm", "Cutworms"]
+            },
+            "tomato": {
+                "season": "Year-round with proper care",
+                "water": "Regular watering, avoid waterlogging",
+                "soil": "Well-drained sandy loam soil",
+                "fertilizer": "NPK 100:50:50 kg/ha",
+                "diseases": ["Late blight", "Early blight", "Bacterial wilt"],
+                "pests": ["Whitefly", "Aphids", "Fruit borer"]
+            },
+            "potato": {
+                "season": "Rabi (October-February)",
+                "water": "Moderate water requirement",
+                "soil": "Well-drained sandy loam soil",
+                "fertilizer": "NPK 180:80:100 kg/ha",
+                "diseases": ["Late blight", "Early blight", "Black scurf"],
+                "pests": ["Colorado beetle", "Aphids", "Cutworms"]
+            }
+        }
+        
+        self.pest_solutions = {
+            "aphids": "Use neem oil spray or introduce ladybugs. Apply insecticidal soap.",
+            "whitefly": "Use yellow sticky traps and neem oil. Maintain proper ventilation.",
+            "stem borer": "Use pheromone traps and apply Bt (Bacillus thuringiensis).",
+            "cutworms": "Use collar barriers around plants and apply beneficial nematodes.",
+            "termites": "Use chlorpyrifos or imidacloprid soil treatment.",
+            "fall armyworm": "Use Bt spray or spinosad. Monitor with pheromone traps."
+        }
+        
+        self.disease_solutions = {
+            "blight": "Apply copper-based fungicides. Ensure proper spacing and ventilation.",
+            "rust": "Use resistant varieties and apply fungicides like propiconazole.",
+            "bacterial wilt": "Use resistant varieties and practice crop rotation.",
+            "blast": "Apply tricyclazole or carbendazim fungicides.",
+            "smut": "Use seed treatment with systemic fungicides."
+        }
+        
+        self.farming_tips = [
+            "Practice crop rotation to maintain soil health and reduce pest buildup.",
+            "Test your soil pH regularly - most crops prefer 6.0-7.0 pH.",
+            "Use organic matter like compost to improve soil structure.",
+            "Monitor weather forecasts for irrigation and pest management planning.",
+            "Implement integrated pest management (IPM) for sustainable farming.",
+            "Keep detailed records of planting dates, inputs, and yields.",
+            "Use mulching to conserve moisture and suppress weeds.",
+            "Plant cover crops during off-season to improve soil fertility."
+        ]
+        
+        self.weather_advice = {
+            "rainy": "Ensure proper drainage, watch for fungal diseases, delay spraying.",
+            "dry": "Increase irrigation frequency, apply mulch, monitor for stress.",
+            "hot": "Provide shade if possible, increase watering, harvest early morning.",
+            "cold": "Protect sensitive crops, reduce watering, watch for frost damage.",
+            "windy": "Provide windbreaks, secure tall plants, check for physical damage."
+        }
+
+    def greet_user(self):
+        greetings = [
+            f"Hello! I'm {self.name}, your agricultural assistant. How can I help you today?",
+            f"Welcome to {self.name}! I'm here to help with all your farming questions.",
+            f"Hi there! {self.name} at your service. What agricultural topic would you like to discuss?"
+        ]
+        return random.choice(greetings)
+
+    def get_user_name(self, message):
+        name_patterns = [
+            r"my name is (\w+)",
+            r"i'm (\w+)",
+            r"i am (\w+)",
+            r"call me (\w+)"
+        ]
+        
+        for pattern in name_patterns:
+            match = re.search(pattern, message.lower())
+            if match:
+                self.user_name = match.group(1).capitalize()
+                return f"Nice to meet you, {self.user_name}! How can I assist you with your farming needs?"
+        return None
+
+    def identify_intent(self, message):
+        message = message.lower()        
+        # Crop information intent
+        if any(word in message for word in ["crop", "plant", "grow", "cultivation"]):
+            return "crop_info"
+        
+        # Pest management intent
+        elif any(word in message for word in ["pest", "insect", "bug", "damage"]):
+            return "pest_management"
+        
+        # Disease management intent
+        elif any(word in message for word in ["disease", "fungus", "infection", "sick"]):
+            return "disease_management"
+        
+        # Weather advice intent
+        elif any(word in message for word in ["weather", "rain", "drought", "temperature"]):
+            return "weather_advice"
+        
+        # Fertilizer advice intent
+        elif any(word in message for word in ["fertilizer", "nutrient", "feeding", "npk"]):
+            return "fertilizer_advice"
+        
+        # General farming tips intent
+        elif any(word in message for word in ["tip", "advice", "suggestion", "help"]):
+            return "farming_tips"
+        
+        # Soil management intent
+        elif any(word in message for word in ["soil", "ph", "organic", "compost"]):
+            return "soil_management"
+        
+        return "general"
+
+    def extract_crop_name(self, message):
+        message = message.lower()
+        for crop in self.crops_info.keys():
+            if crop in message:
+                return crop
+        return None
+
+    def is_crop_related(self, message):
+        # Check if the message contains a crop name
+        return any(crop in message.lower() for crop in self.crops_info)
+
+    def handle_crop_info(self, message):
+        crop = self.extract_crop_name(message)
+        if crop and crop in self.crops_info:
+            info = self.crops_info[crop]
+            response = f"Here's information about {crop.capitalize()}:\n\n"
+            response += f"🌱 Season: {info['season']}\n"
+            response += f"💧 Water needs: {info['water']}\n"
+            response += f"🌍 Soil requirements: {info['soil']}\n"
+            response += f"🧪 Fertilizer: {info['fertilizer']}\n"
+            response += f"🦠 Common diseases: {', '.join(info['diseases'])}\n"
+            response += f"🐛 Common pests: {', '.join(info['pests'])}\n"
+            return response
+        else:
+            available_crops = ", ".join(self.crops_info.keys())
+            return f"I have information about these crops: {available_crops}. Which one would you like to know about?"
+
+    def handle_pest_management(self, message):
+        message = message.lower()
+        for pest, solution in self.pest_solutions.items():
+            if pest in message:
+                return f"For {pest} management:\n{solution}\n\nAlways follow integrated pest management practices for best results."
+        
+        return "Common pest management strategies:\n• Use beneficial insects\n• Apply neem oil\n• Practice crop rotation\n• Monitor regularly\n• Use pheromone traps\n\nCould you specify which pest you're dealing with?"
+
+    def handle_disease_management(self, message):
+        message = message.lower()
+        for disease, solution in self.disease_solutions.items():
+            if disease in message:
+                return f"For {disease} management:\n{solution}\n\nRemember to follow label instructions and maintain proper sanitation."
+        
+        return "General disease prevention:\n• Use resistant varieties\n• Ensure proper spacing\n• Avoid overhead watering\n• Practice crop rotation\n• Remove infected plant material\n\nWhat specific disease are you concerned about?"
+
+    def handle_weather_advice(self, message):
+        message = message.lower()
+        for weather, advice in self.weather_advice.items():
+            if weather in message:
+                return f"For {weather} weather conditions:\n{advice}\n\nAlways monitor local weather forecasts for better planning."
+        
+        return "Weather considerations for farming:\n• Monitor forecasts regularly\n• Plan irrigation based on rainfall\n• Protect crops from extreme weather\n• Adjust harvesting schedules\n\nWhat weather condition are you asking about?"
+
+    def handle_fertilizer_advice(self, message):
+        crop = self.extract_crop_name(message)
+        if crop and crop in self.crops_info:
+            fertilizer = self.crops_info[crop]['fertilizer']
+            return f"For {crop.capitalize()}, recommended fertilizer application is: {fertilizer}\n\nGeneral fertilizer tips:\n• Soil test before application\n• Apply in split doses\n• Consider organic alternatives\n• Follow local recommendations"
+        
+        return "General fertilizer guidelines:\n• Test soil before application\n• Use balanced NPK ratios\n• Apply organic matter regularly\n• Consider slow-release fertilizers\n• Monitor plant response\n\nWhich crop are you fertilizing?"
+
+    def handle_soil_management(self, message):
+        tips = [
+            "Maintain soil pH between 6.0-7.0 for most crops",
+            "Add organic matter like compost regularly",
+            "Practice crop rotation to maintain soil health",
+            "Test soil every 2-3 years",
+            "Use cover crops to prevent erosion",
+            "Avoid overworking wet soil",
+            "Implement no-till practices when possible"
+        ]
+        return "Soil management tips:\n" + "\n".join([f"• {tip}" for tip in tips])
+
+    def handle_farming_tips(self, message):
+        tip = random.choice(self.farming_tips)
+        return f"Here's a farming tip for you:\n💡 {tip}\n\nWould you like more specific advice on any farming topic?"
+
+    def process_message(self, message):
+        # Check if the user is introducing themselves
+        name_response = self.get_user_name(message)
+        if name_response:
+            return name_response
+
+        # Identify intent and provide appropriate response
+        intent = self.identify_intent(message)
+        
+        # Prioritize crop information if a crop name is mentioned
+        if self.is_crop_related(message):
+            return self.handle_crop_info(message)
+        elif intent == "crop_info":
+            return self.handle_crop_info(message)
+        elif intent == "pest_management":
+            return self.handle_pest_management(message)
+        elif intent == "disease_management":
+            return self.handle_disease_management(message)
+        elif intent == "weather_advice":
+            return self.handle_weather_advice(message)
+        elif intent == "fertilizer_advice":
+            return self.handle_fertilizer_advice(message)
+        elif intent == "soil_management":
+            return self.handle_soil_management(message)
+        elif intent == "farming_tips":
+            return self.handle_farming_tips(message)
+        else:
+            return self.handle_general_query(message)
+
+    def handle_general_query(self, message):
+        # Try to use AI model for general queries
+        if self.generator:
+            try:
+                # Create a prompt for agricultural context
+                prompt = f"<|user|>\nAs an agricultural expert, please answer this farming question: {message}\n<|assistant|>\n"
+                
+                result = self.generator(
+                    prompt, 
+                    max_new_tokens=150, 
+                    do_sample=True, 
+                    temperature=0.7,
+                    pad_token_id=self.tokenizer.eos_token_id
+                )[0]["generated_text"]
+                
+                # Extract the assistant's response
+                reply = result.split("<|assistant|>\n")[-1].strip()
+                
+                # Clean up the response and ensure it's agriculture-focused
+                if reply and len(reply) > 10:
+                    return reply
+                    
+            except Exception as e:
+                print(f"AI model error: {e}")
+        
+        # Fallback responses if AI model fails or isn't available
+        fallback_responses = [
+            "I can help you with crop information, pest management, disease control, weather advice, fertilizer recommendations, and general farming tips. What would you like to know?",
+            "I'm here to assist with your agricultural needs. You can ask me about crops, pests, diseases, soil management, or farming techniques.",
+            "Feel free to ask me about any farming topic - crops, pests, diseases, fertilizers, soil health, or weather-related farming advice.",
+            "I'm not sure about that specific question, but I can help with farming topics like crop cultivation, pest control, soil management, and agricultural best practices."
+        ]
+        return random.choice(fallback_responses)
+
+def main():
+    """Main function to run the AgriBot with Streamlit UI"""
+    bot = AgriBot()
+
+    # Streamlit UI setup
+    st.markdown("<h1 style='text-align: center;'>🌾 AgriBot - Your Agricultural Assistant 🌾</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center;'>Ask me anything about farming!</p>", unsafe_allow_html=True)
+
+    # Initialize chat history in session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Display chat messages from history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Chat input
+    user_input = st.chat_input("Your message...")
+
+    if user_input:
+        # Display user message in chat
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # Process user input and get the bot's response
+        response = bot.process_message(user_input)
+
+        # Display bot response in chat
+        st.session_state.messages.append({"role": "AgriBot", "content": response})
+        with st.chat_message("AgriBot"):
+            st.markdown(response)
+
+
+    def chat_cli(self):
+        print("=" * 60)
+        print("🌾 Welcome to AgriBot - Your Agricultural Assistant 🌾")
+        print("=" * 60)
+        print(self.greet_user())
+        print("\\nType 'quit', 'exit', or 'bye' to end the conversation.")
+        print("-" * 60)
+        
+        while True:
+            user_input = input(f"\n{self.user_name if self.user_name else 'You'}: ").strip()
+            
+            if user_input.lower() in ['quit', 'exit', 'bye', 'goodbye']:
+                farewell = f"Goodbye{', ' + self.user_name if self.user_name else ''}! Happy farming! 🌱"
+                print(f"\n{self.name}: {farewell}")
+                break
+            
+            if not user_input:
+                print(f"\n{self.name}: Please ask me something about agriculture!")
+                continue
+            
+            # Store conversation
+            self.conversation_history.append(("User", user_input))
+            
+            # Process and respond
+            response = self.process_message(user_input)
+            print(f"\n{self.name}: {response}")
+            
+            # Store bot response
+            self.conversation_history.append((self.name, response))
+
+if __name__ == "__main__":
+    main()
