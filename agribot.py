@@ -1,8 +1,15 @@
 import re
 import random
 import streamlit as st
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import torch
+
+# Try to import transformers, but handle gracefully if not available
+try:
+    from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+    import torch
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    st.warning("⚠️ AI model libraries not available. Running in knowledge-base mode only.")
 
 # Embedded CSS
 def set_css():
@@ -299,7 +306,7 @@ class AgriBot:
 
     def load_model(self):
         """Lazy load the model only when needed"""
-        if not self.model_loaded:
+        if not self.model_loaded and TRANSFORMERS_AVAILABLE:
             with st.spinner("🤖 Loading AI model... One moment please..."):
                 try:
                     model_id = "microsoft/phi-3-mini-4k-instruct"
@@ -319,6 +326,8 @@ class AgriBot:
                 except Exception as e:
                     st.warning(f"⚠️ Could not load AI model ({e}). Using fallback responses.")
                     self.generator = None
+        elif not TRANSFORMERS_AVAILABLE:
+            self.generator = None
 
     def greet_user(self):
         greetings = [
